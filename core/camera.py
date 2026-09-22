@@ -31,10 +31,12 @@ class CameraStream:
 
         # For RTSP, disable buffering where supported
         if isinstance(parsed_source, str) and parsed_source.startswith("rtsp://"):
-            # Set environment variable or backend parameters if needed
             self.cap = cv2.VideoCapture(parsed_source, cv2.CAP_FFMPEG)
+        elif isinstance(parsed_source, int):
+            self.cap = cv2.VideoCapture(parsed_source, cv2.CAP_DSHOW)
         else:
             self.cap = cv2.VideoCapture(parsed_source)
+
 
         if not self.cap or not self.cap.isOpened():
             return False
