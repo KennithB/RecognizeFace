@@ -3,18 +3,23 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environments
+# Virtual environments & Environment variables
 venv/
 .venv/
 env/
 ENV/
+.env
+.env.*
+*.env
 
 # Sensitive Biometrics & Face Data (DO NOT COMMIT)
 profiles/*.npy
 training_images/
+captured_strangers/
 *.jpg
 *.jpeg
 *.png
+
 
 # InsightFace downloaded model caches
 .insightface/

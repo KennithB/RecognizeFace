@@ -1,7 +1,24 @@
+import os
+import sys
+from pathlib import Path
 from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 from insightface.app import FaceAnalysis
+
+
+def _register_nvidia_dlls():
+    """On Windows, registers nvidia pip wheel DLL folders with the OS loader."""
+    if sys.platform != "win32":
+        return
+    site_packages = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
+    if site_packages.exists():
+        for bin_dir in site_packages.glob("*/bin"):
+            if bin_dir.is_dir():
+                try:
+                    os.add_dll_directory(str(bin_dir))
+                except Exception:
+                    pass
 
 
 class FaceRecognitionEngine:
@@ -16,8 +33,10 @@ class FaceRecognitionEngine:
         use_gpu: bool = True,
         det_size: Tuple[int, int] = (640, 640),
     ):
+        _register_nvidia_dlls()
         self.model_name = model_name
         self.det_size = det_size
+
 
         if use_gpu:
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
