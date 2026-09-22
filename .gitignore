@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Sensitive Biometrics & Face Data (DO NOT COMMIT)
+profiles/*.npy
+training_images/
+*.jpg
+*.jpeg
+*.png
+
+# InsightFace downloaded model caches
+.insightface/
+models/
+*.onnx
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
