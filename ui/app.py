@@ -1,7 +1,7 @@
 import time
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 from typing import Optional
+import customtkinter as ctk
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
@@ -11,283 +11,214 @@ from core.engine import FaceRecognitionEngine
 from core.profile_manager import ProfileManager
 
 
-class FaceRecognitionApp:
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        self.root.title("Doorbell AI - Face Recognition System (InsightFace)")
-        self.root.geometry("1240x820")
-        self.root.minsize(1000, 680)
+class FaceRecognitionApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
 
-        # Style & theme
-        self.bg_dark = "#14171a"
-        self.panel_bg = "#212529"
-        self.fg_text = "#f8f9fa"
-        self.accent_color = "#00adb5"
-        self.root.configure(bg=self.bg_dark)
+        # Window configuration
+        self.title("Face Recognition System")
+        self.geometry("1200x780")
+        self.minsize(980, 640)
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
 
-        # Systems initialization
+        # System components
         self.profile_mgr = ProfileManager(profiles_dir="profiles")
         self.engine = FaceRecognitionEngine(model_name="buffalo_l", use_gpu=True)
         self.camera = CameraStream(source=0)
 
-        # UI state
+        # Runtime state
         self.is_streaming = False
         self.current_frame: Optional[np.ndarray] = None
         self.gallery_names, self.gallery_matrix = self.profile_mgr.get_gallery_matrix()
         self.prev_time = time.time()
         self.fps = 0.0
 
-        self._build_ui()
-        self._refresh_profile_list()
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self._build_layout()
+        self._refresh_profiles()
 
-    def _build_ui(self):
-        # Main Layout: 2 Columns (Left: Video, Right: Controls & Profiles)
-        main_frame = tk.Frame(self.root, bg=self.bg_dark)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+    def _build_layout(self):
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=0)
+        self.grid_rowconfigure(0, weight=1)
 
-        # Left: Video Feed
-        video_container = tk.Frame(main_frame, bg=self.panel_bg, relief=tk.FLAT, bd=2)
-        video_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        # ================= Video Container (Left) =================
+        self.video_panel = ctk.CTkFrame(self, corner_radius=8)
+        self.video_panel.grid(row=0, column=0, sticky="nsew", padx=(16, 8), pady=16)
+        self.video_panel.grid_rowconfigure(1, weight=1)
+        self.video_panel.grid_columnconfigure(0, weight=1)
 
-        # Title bar above video
-        feed_header = tk.Frame(video_container, bg=self.panel_bg)
-        feed_header.pack(fill=tk.X, padx=10, pady=8)
+        # Video Header
+        self.header_frame = ctk.CTkFrame(self.video_panel, fg_color="transparent")
+        self.header_frame.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
+        self.header_frame.grid_columnconfigure(0, weight=1)
 
-        self.lbl_feed_title = tk.Label(
-            feed_header,
-            text="● Live Surveillance Feed",
-            font=("Segoe UI", 12, "bold"),
-            bg=self.panel_bg,
-            fg="#2ecc71",
+        self.lbl_status = ctk.CTkLabel(
+            self.header_frame,
+            text="Camera Idle",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#8a94a6",
         )
-        self.lbl_feed_title.pack(side=tk.LEFT)
+        self.lbl_status.grid(row=0, column=0, sticky="w")
 
-        self.lbl_fps = tk.Label(
-            feed_header,
-            text="FPS: 0.0",
-            font=("Segoe UI", 10),
-            bg=self.panel_bg,
-            fg="#adb5bd",
+        self.lbl_fps = ctk.CTkLabel(
+            self.header_frame,
+            text="0.0 FPS",
+            font=ctk.CTkFont(size=13),
+            text_color="#8a94a6",
         )
-        self.lbl_fps.pack(side=tk.RIGHT)
+        self.lbl_fps.grid(row=0, column=1, sticky="e")
 
-        # Canvas for displaying camera frames
-        self.canvas_video = tk.Label(
-            video_container,
-            text="Camera feed stopped.\nClick 'Start Camera' on the right panel.",
-            font=("Segoe UI", 12),
-            bg="#0d1117",
-            fg="#8b949e",
+        # Video Viewport
+        self.video_display = ctk.CTkLabel(
+            self.video_panel,
+            text="Feed stopped\nStart camera to begin detection",
+            font=ctk.CTkFont(size=14),
+            fg_color="#121316",
+            corner_radius=6,
         )
-        self.canvas_video.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        self.video_display.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
 
-        # Status Bar beneath video
-        self.lbl_status = tk.Label(
-            video_container,
-            text="Ready. Detected: 0 faces | Strangers: 0",
-            font=("Segoe UI", 10),
-            bg=self.panel_bg,
-            fg="#e9ecef",
+        # ================= Controls Sidebar (Right) =================
+        self.sidebar = ctk.CTkScrollableFrame(self, width=320, corner_radius=8)
+        self.sidebar.grid(row=0, column=1, sticky="nsew", padx=(8, 16), pady=16)
+
+        # --- Section: Camera ---
+        lbl_cam = ctk.CTkLabel(
+            self.sidebar,
+            text="Camera Source",
+            font=ctk.CTkFont(size=13, weight="bold"),
             anchor="w",
         )
-        self.lbl_status.pack(fill=tk.X, padx=10, pady=(0, 8))
+        lbl_cam.pack(fill="x", pady=(8, 4))
 
-        # Right: Side Control Panel
-        side_panel = tk.Frame(main_frame, bg=self.panel_bg, width=380)
-        side_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 0))
-        side_panel.pack_propagate(False)
-
-        # --- Section 1: Camera Configuration ---
-        cam_frame = tk.LabelFrame(
-            side_panel,
-            text=" Camera Hardware Connection ",
-            font=("Segoe UI", 10, "bold"),
-            bg=self.panel_bg,
-            fg=self.fg_text,
-            padx=10,
-            pady=10,
+        self.entry_source = ctk.CTkEntry(
+            self.sidebar,
+            placeholder_text="0, 1 or RTSP URL",
+            height=34,
         )
-        cam_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+        self.entry_source.insert(0, "0")
+        self.entry_source.pack(fill="x", pady=(0, 8))
 
-        tk.Label(
-            cam_frame,
-            text="Source (Index e.g. 0, or RTSP URL):",
-            bg=self.panel_bg,
-            fg="#adb5bd",
-            font=("Segoe UI", 9),
-        ).pack(anchor="w")
-
-        self.source_entry = ttk.Combobox(
-            cam_frame,
-            values=["0", "1", "2", "rtsp://192.168.1.100:554/stream1"],
-            font=("Segoe UI", 10),
-        )
-        self.source_entry.set("0")
-        self.source_entry.pack(fill=tk.X, pady=(2, 8))
-
-        self.btn_camera = tk.Button(
-            cam_frame,
+        self.btn_camera = ctk.CTkButton(
+            self.sidebar,
             text="Start Camera",
-            bg="#2ecc71",
-            fg="#ffffff",
-            font=("Segoe UI", 10, "bold"),
-            relief=tk.FLAT,
+            height=36,
             command=self._toggle_camera,
-            cursor="hand2",
         )
-        self.btn_camera.pack(fill=tk.X)
+        self.btn_camera.pack(fill="x", pady=(0, 16))
 
-        # --- Section 2: Recognition Parameters ---
-        param_frame = tk.LabelFrame(
-            side_panel,
-            text=" Detection Sensitivity ",
-            font=("Segoe UI", 10, "bold"),
-            bg=self.panel_bg,
-            fg=self.fg_text,
-            padx=10,
-            pady=8,
+        # --- Section: Sensitivity ---
+        lbl_thresh = ctk.CTkLabel(
+            self.sidebar,
+            text="Matching Threshold",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            anchor="w",
         )
-        param_frame.pack(fill=tk.X, padx=10, pady=5)
+        lbl_thresh.pack(fill="x", pady=(4, 2))
 
-        tk.Label(
-            param_frame,
-            text="Cosine Similarity Threshold:",
-            bg=self.panel_bg,
-            fg="#adb5bd",
-            font=("Segoe UI", 9),
-        ).pack(anchor="w")
+        self.lbl_thresh_val = ctk.CTkLabel(
+            self.sidebar,
+            text="0.45",
+            font=ctk.CTkFont(size=12),
+            text_color="#8a94a6",
+            anchor="w",
+        )
+        self.lbl_thresh_val.pack(fill="x", pady=(0, 2))
 
-        self.threshold_var = tk.DoubleVar(value=0.45)
-        self.threshold_slider = ttk.Scale(
-            param_frame,
+        self.slider_thresh = ctk.CTkSlider(
+            self.sidebar,
             from_=0.20,
             to=0.75,
-            variable=self.threshold_var,
-            orient=tk.HORIZONTAL,
-            command=lambda v: self.lbl_threshold_val.config(text=f"{float(v):.2f}"),
+            number_of_steps=55,
+            command=self._on_threshold_change,
         )
-        self.threshold_slider.pack(fill=tk.X, pady=(2, 2))
+        self.slider_thresh.set(0.45)
+        self.slider_thresh.pack(fill="x", pady=(0, 16))
 
-        self.lbl_threshold_val = tk.Label(
-            param_frame,
-            text="0.45",
-            bg=self.panel_bg,
-            fg=self.accent_color,
-            font=("Segoe UI", 9, "bold"),
+        # --- Section: Profile Registration ---
+        lbl_enroll = ctk.CTkLabel(
+            self.sidebar,
+            text="Enroll Face Profile",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            anchor="w",
         )
-        self.lbl_threshold_val.pack(anchor="e")
+        lbl_enroll.pack(fill="x", pady=(4, 4))
 
-        # --- Section 3: Profile Registration (Train Faces) ---
-        train_frame = tk.LabelFrame(
-            side_panel,
-            text=" Train / Register Face Profile ",
-            font=("Segoe UI", 10, "bold"),
-            bg=self.panel_bg,
-            fg=self.fg_text,
-            padx=10,
-            pady=10,
+        self.entry_name = ctk.CTkEntry(
+            self.sidebar,
+            placeholder_text="Person Name",
+            height=34,
         )
-        train_frame.pack(fill=tk.X, padx=10, pady=5)
+        self.entry_name.pack(fill="x", pady=(0, 8))
 
-        tk.Label(
-            train_frame,
-            text="Person Name:",
-            bg=self.panel_bg,
-            fg="#adb5bd",
-            font=("Segoe UI", 9),
-        ).pack(anchor="w")
-
-        self.name_entry = tk.Entry(
-            train_frame,
-            font=("Segoe UI", 10),
-            bg="#2c3036",
-            fg="#ffffff",
-            insertbackground="#ffffff",
+        self.btn_capture = ctk.CTkButton(
+            self.sidebar,
+            text="Capture from Stream",
+            height=34,
+            fg_color="#2b313a",
+            hover_color="#363d48",
+            command=self._register_from_stream,
         )
-        self.name_entry.pack(fill=tk.X, pady=(2, 8))
+        self.btn_capture.pack(fill="x", pady=(0, 6))
 
-        btn_row1 = tk.Frame(train_frame, bg=self.panel_bg)
-        btn_row1.pack(fill=tk.X, pady=2)
-
-        self.btn_capture = tk.Button(
-            btn_row1,
-            text="📸 Capture from Feed",
-            bg="#3498db",
-            fg="#ffffff",
-            font=("Segoe UI", 9, "bold"),
-            relief=tk.FLAT,
-            command=self._register_from_camera,
-            cursor="hand2",
-        )
-        self.btn_capture.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-
-        self.btn_file = tk.Button(
-            btn_row1,
-            text="📁 From Image",
-            bg="#6c757d",
-            fg="#ffffff",
-            font=("Segoe UI", 9, "bold"),
-            relief=tk.FLAT,
+        self.btn_import = ctk.CTkButton(
+            self.sidebar,
+            text="Import Photo File",
+            height=34,
+            fg_color="#2b313a",
+            hover_color="#363d48",
             command=self._register_from_file,
-            cursor="hand2",
         )
-        self.btn_file.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
+        self.btn_import.pack(fill="x", pady=(0, 16))
 
-        # --- Section 4: Known Profiles List ---
-        list_frame = tk.LabelFrame(
-            side_panel,
-            text=" Known Profiles Directory ",
-            font=("Segoe UI", 10, "bold"),
-            bg=self.panel_bg,
-            fg=self.fg_text,
-            padx=10,
-            pady=10,
+        # --- Section: Registered Profiles ---
+        lbl_profiles = ctk.CTkLabel(
+            self.sidebar,
+            text="Registered Profiles",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            anchor="w",
         )
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(5, 10))
+        lbl_profiles.pack(fill="x", pady=(4, 4))
 
-        self.profile_listbox = tk.Listbox(
-            list_frame,
-            font=("Segoe UI", 10),
-            bg="#2c3036",
-            fg="#ffffff",
-            selectbackground=self.accent_color,
-            selectforeground="#000000",
-            relief=tk.FLAT,
-        )
-        self.profile_listbox.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        self.profiles_container = ctk.CTkFrame(self.sidebar, fg_color="#181a1f", corner_radius=6)
+        self.profiles_container.pack(fill="x", pady=(0, 8))
 
-        self.btn_delete = tk.Button(
-            list_frame,
-            text="🗑 Delete Selected Profile",
-            bg="#e74c3c",
-            fg="#ffffff",
-            font=("Segoe UI", 9, "bold"),
-            relief=tk.FLAT,
-            command=self._delete_profile,
-            cursor="hand2",
+        self.selected_profile: Optional[str] = None
+        self.profile_buttons = []
+
+        self.btn_delete = ctk.CTkButton(
+            self.sidebar,
+            text="Delete Profile",
+            height=34,
+            fg_color="#992d22",
+            hover_color="#b83528",
+            command=self._delete_selected_profile,
         )
-        self.btn_delete.pack(fill=tk.X)
+        self.btn_delete.pack(fill="x", pady=(0, 12))
+
+    def _on_threshold_change(self, val):
+        self.lbl_thresh_val.configure(text=f"{float(val):.2f}")
 
     def _toggle_camera(self):
         if not self.is_streaming:
-            source = self.source_entry.get().strip()
+            source = self.entry_source.get().strip()
             self.camera.source = source
             if not self.camera.start():
-                messagebox.showerror(
-                    "Connection Error",
-                    f"Could not open camera stream source '{source}'.\nCheck device connection or RTSP URL.",
-                )
+                messagebox.showerror("Error", f"Failed to open camera: '{source}'")
                 return
             self.is_streaming = True
-            self.btn_camera.config(text="Stop Camera", bg="#e74c3c")
-            self.lbl_feed_title.config(text="● Live Surveillance Feed [ACTIVE]", fg="#2ecc71")
+            self.btn_camera.configure(text="Stop Camera", fg_color="#992d22", hover_color="#b83528")
+            self.lbl_status.configure(text="Active Monitoring", text_color="#2ecc71")
             self._update_loop()
         else:
             self.is_streaming = False
             self.camera.stop()
-            self.btn_camera.config(text="Start Camera", bg="#2ecc71")
-            self.lbl_feed_title.config(text="● Surveillance Feed [PAUSED]", fg="#e74c3c")
-            self.canvas_video.config(image="", text="Camera stopped.")
+            self.btn_camera.configure(text="Start Camera", fg_color=["#3B8ED0", "#1F6AA5"], hover_color=["#36719F", "#144870"])
+            self.lbl_status.configure(text="Camera Stopped", text_color="#8a94a6")
+            self.lbl_fps.configure(text="0.0 FPS")
+            self.video_display.configure(image="", text="Feed stopped\nStart camera to begin detection")
 
     def _update_loop(self):
         if not self.is_streaming:
@@ -296,152 +227,166 @@ class FaceRecognitionApp:
         frame = self.camera.read_frame()
         if frame is not None:
             self.current_frame = frame.copy()
-
-            # Run InsightFace analysis
             faces = self.engine.analyze_frame(frame)
+            threshold = float(self.slider_thresh.get())
             stranger_count = 0
 
-            threshold = float(self.threshold_var.get())
-
-            # Draw recognition overlays
             for face in faces:
-                bbox = face.bbox.astype(int)
-                x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
-
-                identity, score = self.engine.match_embedding(
+                x1, y1, x2, y2 = face.bbox.astype(int)
+                name, score = self.engine.match_embedding(
                     face.normed_embedding,
                     self.gallery_names,
                     self.gallery_matrix,
                     threshold=threshold,
                 )
 
-                if identity == "STRANGER":
+                if name == "STRANGER":
                     stranger_count += 1
-                    color = (0, 0, 255)  # BGR: Red
-                    label = f"STRANGER ({score:.2f})"
+                    box_color = (0, 0, 255)
+                    label_text = f"STRANGER ({score:.2f})"
                 else:
-                    color = (0, 255, 0)  # BGR: Green
-                    label = f"{identity} ({score:.2f})"
+                    box_color = (0, 230, 115)
+                    label_text = f"{name} ({score:.2f})"
 
-                # Draw bounding box & label tag
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                
-                # Tag background
-                tag_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                cv2.rectangle(
-                    frame,
-                    (x1, y1 - tag_size[1] - 8),
-                    (x1 + tag_size[0] + 6, y1),
-                    color,
-                    -1,
-                )
+                cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+                (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+                cv2.rectangle(frame, (x1, y1 - th - 8), (x1 + tw + 6, y1), box_color, -1)
                 cv2.putText(
                     frame,
-                    label,
+                    label_text,
                     (x1 + 3, y1 - 4),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 255) if identity == "STRANGER" else (0, 0, 0),
-                    2,
+                    0.55,
+                    (255, 255, 255) if name == "STRANGER" else (0, 0, 0),
+                    1,
+                    cv2.LINE_AA,
                 )
 
-            # Update FPS and Status
+            # Update FPS & Status
             now = time.time()
             dt = now - self.prev_time
             self.prev_time = now
             if dt > 0:
                 self.fps = 0.9 * self.fps + 0.1 * (1.0 / dt)
-            self.lbl_fps.config(text=f"FPS: {self.fps:.1f}")
+            self.lbl_fps.configure(text=f"{self.fps:.1f} FPS")
 
-            status_text = f"Detected: {len(faces)} faces | Strangers: {stranger_count}"
+            status_msg = f"{len(faces)} Face(s) Detected"
             if stranger_count > 0:
-                self.lbl_status.config(text=f"⚠️ ALERT: {status_text}", fg="#ff6b6b")
+                status_msg += f" — {stranger_count} Stranger(s)"
+                self.lbl_status.configure(text=status_msg, text_color="#ff5252")
             else:
-                self.lbl_status.config(text=f"Active: {status_text}", fg="#e9ecef")
+                self.lbl_status.configure(text=status_msg, text_color="#2ecc71")
 
-            # Convert to PIL and Tk image
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w = rgb_frame.shape[:2]
+            # Scale and display image
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w = rgb.shape[:2]
 
-            # Fit to canvas dimensions maintaining aspect ratio
-            cw = max(self.canvas_video.winfo_width(), 400)
-            ch = max(self.canvas_video.winfo_height(), 300)
-            scale = min(cw / w, ch / h)
-            nw, nh = int(w * scale), int(h * scale)
+            disp_w = max(self.video_display.winfo_width(), 480)
+            disp_h = max(self.video_display.winfo_height(), 320)
+            scale = min(disp_w / w, disp_h / h)
+            nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
 
-            if nw > 0 and nh > 0:
-                resized = cv2.resize(rgb_frame, (nw, nh), interpolation=cv2.INTER_AREA)
-                img = ImageTk.PhotoImage(image=Image.fromarray(resized))
-                self.canvas_video.img_ref = img
-                self.canvas_video.config(image=img, text="")
+            resized = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_AREA)
+            img = ImageTk.PhotoImage(image=Image.fromarray(resized))
+            self.video_display.img_ref = img
+            self.video_display.configure(image=img, text="")
 
-        self.root.after(20, self._update_loop)
+        self.after(20, self._update_loop)
 
-    def _register_from_camera(self):
-        name = self.name_entry.get().strip()
+    def _register_from_stream(self):
+        name = self.entry_name.get().strip()
         if not name:
-            messagebox.showwarning("Input Required", "Please enter a person name before registering.")
+            messagebox.showwarning("Warning", "Enter a person name first.")
             return
 
         if self.current_frame is None:
-            messagebox.showwarning("No Frame", "Camera must be running to capture a face.")
+            messagebox.showwarning("Warning", "Camera is not streaming.")
             return
 
         emb = self.engine.extract_face_embedding(self.current_frame)
         if emb is None:
-            messagebox.showerror(
-                "Face Not Found",
-                "No clear face detected in the current camera frame.\nPlease face the camera and try again.",
-            )
+            messagebox.showerror("Error", "No face detected in current frame.")
             return
 
         self.profile_mgr.save_profile(name, emb)
-        self._refresh_profile_list()
-        self.name_entry.delete(0, tk.END)
-        messagebox.showinfo("Success", f"Profile '{name}' registered successfully.")
+        self.entry_name.delete(0, "end")
+        self._refresh_profiles()
+        messagebox.showinfo("Success", f"Profile '{name}' registered.")
 
     def _register_from_file(self):
-        name = self.name_entry.get().strip()
+        name = self.entry_name.get().strip()
         if not name:
-            messagebox.showwarning("Input Required", "Please enter a person name before registering.")
+            messagebox.showwarning("Warning", "Enter a person name first.")
             return
 
-        file_path = filedialog.askopenfilename(
-            title="Select Face Image",
-            filetypes=[("Image Files", "*.jpg *.jpeg *.png *.bmp *.webp")],
+        path = filedialog.askopenfilename(
+            title="Select Face Photo",
+            filetypes=[("Image Files", "*.jpg *.jpeg *.png *.webp *.bmp")],
         )
-        if not file_path:
+        if not path:
             return
 
-        emb = self.engine.extract_from_file(file_path)
+        emb = self.engine.extract_from_file(path)
         if emb is None:
-            messagebox.showerror("Face Not Found", "No face detected in selected image file.")
+            messagebox.showerror("Error", "No face found in selected image.")
             return
 
         self.profile_mgr.save_profile(name, emb)
-        self._refresh_profile_list()
-        self.name_entry.delete(0, tk.END)
-        messagebox.showinfo("Success", f"Profile '{name}' registered from image file.")
+        self.entry_name.delete(0, "end")
+        self._refresh_profiles()
+        messagebox.showinfo("Success", f"Profile '{name}' registered.")
 
-    def _delete_profile(self):
-        selection = self.profile_listbox.curselection()
-        if not selection:
-            messagebox.showinfo("Selection Required", "Please select a profile to delete.")
+    def _select_profile(self, name: str):
+        self.selected_profile = name
+        for btn, p_name in self.profile_buttons:
+            if p_name == name:
+                btn.configure(fg_color="#3a4454")
+            else:
+                btn.configure(fg_color="transparent")
+
+    def _delete_selected_profile(self):
+        if not self.selected_profile:
+            messagebox.showinfo("Notice", "Select a profile to delete.")
             return
 
-        name = self.profile_listbox.get(selection[0])
-        if messagebox.askyesno("Confirm Deletion", f"Delete face profile '{name}'?"):
-            self.profile_mgr.delete_profile(name)
-            self._refresh_profile_list()
+        if messagebox.askyesno("Confirm", f"Delete profile '{self.selected_profile}'?"):
+            self.profile_mgr.delete_profile(self.selected_profile)
+            self.selected_profile = None
+            self._refresh_profiles()
 
-    def _refresh_profile_list(self):
-        self.profile_listbox.delete(0, tk.END)
+    def _refresh_profiles(self):
+        for btn, _ in self.profile_buttons:
+            btn.destroy()
+        self.profile_buttons.clear()
+
         profiles = self.profile_mgr.list_profiles()
-        for p in profiles:
-            self.profile_listbox.insert(tk.END, p)
+        if not profiles:
+            lbl_empty = ctk.CTkLabel(
+                self.profiles_container,
+                text="No profiles registered",
+                font=ctk.CTkFont(size=12),
+                text_color="#6c757d",
+            )
+            lbl_empty.pack(pady=10)
+            self.profile_buttons.append((lbl_empty, ""))
+        else:
+            for name in profiles:
+                btn = ctk.CTkButton(
+                    self.profiles_container,
+                    text=name,
+                    font=ctk.CTkFont(size=12),
+                    anchor="w",
+                    height=30,
+                    fg_color="transparent",
+                    hover_color="#2b313a",
+                    command=lambda n=name: self._select_profile(n),
+                )
+                btn.pack(fill="x", padx=4, pady=2)
+                self.profile_buttons.append((btn, name))
+
         self.gallery_names, self.gallery_matrix = self.profile_mgr.get_gallery_matrix()
 
     def on_closing(self):
         self.is_streaming = False
         self.camera.stop()
-        self.root.destroy()
+        self.destroy()
